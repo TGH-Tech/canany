@@ -13,6 +13,15 @@ const { extractAttachments, bufferAlbum } = require('../attachments');
 
 const ASK_PREFIX = config.behavior.askPrefix;
 
+// Split "#ask" into its leading symbol ("#") and word ("ask") so the two can be
+// matched independently: case-insensitively, and with optional whitespace
+// between them (so "#ask", "#Ask", "# ask", "# Ask" all match).
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const prefixParts = ASK_PREFIX.match(/^(\W+)(\w+)$/);
+const ASK_PATTERN = prefixParts
+  ? new RegExp(`^${escapeRegex(prefixParts[1])}\\s*${escapeRegex(prefixParts[2])}(?=\\s|$)`, 'i')
+  : new RegExp(`^${escapeRegex(ASK_PREFIX)}(?=\\s|$)`, 'i');
+
 // The Telegram Bot API can't download a file larger than this, so it can't be
 // copied to S3 — such a file is recorded with no key and shown as a "view in
 // Telegram" link on the board instead of a thumbnail.
@@ -21,10 +30,9 @@ const MAX_TG_DOWNLOAD = 20 * 1024 * 1024;
 // Parse an ask body out of message text. Returns the trimmed request, or null if
 // the text isn't a well-formed ask ("#asking ..." and a bare "#ask" are rejected).
 function parseAsk(text) {
-  if (!text.startsWith(ASK_PREFIX)) return null;
-  const rest = text.slice(ASK_PREFIX.length);
-  if (rest && !/^\s/.test(rest)) return null; // "#asking ..." is not an ask
-  return rest.trim() || null; // null for a bare "#ask" with no body
+  const match = ASK_PATTERN.exec(text);
+  if (!match) return null;
+  return text.slice(match[0].length).trim() || null; // null for a bare "#ask" with no body
 }
 
 // Store an ask's files best-effort and concurrently, after the card is posted, so
