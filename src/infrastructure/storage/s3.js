@@ -1,13 +1,18 @@
 // S3 adapter for #ask attachments. One client; two operations:
 //  - putAttachment: stream a file's bytes into the private bucket (ingest)
-//  - signedUrl:     mint a short-lived GET URL the browser loads directly (serve)
-// Credentials come from the AWS SDK's default provider chain (see src/config).
+//  - getAttachment: open a read stream of a stored object (serve)
+// Works against AWS S3 or any S3-compatible store (the platform's MinIO bucket):
+// endpoint, path-style addressing and credentials all come from src/config.
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { Upload } = require('@aws-sdk/lib-storage');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const config = require('../../config');
 
-const client = new S3Client({ region: config.storage.awsRegion });
+const client = new S3Client({
+  region: config.storage.region,
+  ...(config.storage.endpoint ? { endpoint: config.storage.endpoint } : {}),
+  forcePathStyle: config.storage.forcePathStyle,
+  ...(config.storage.credentials ? { credentials: config.storage.credentials } : {}),
+});
 
 // Key layout: attachments/<orgId>/<askId>/<index>-<fileUniqueId>. The <index>-
 // prefix (0-based position of the file within its message/album) makes the key
@@ -24,7 +29,7 @@ async function putAttachment({ orgId, askId, index, fileUniqueId, body, contentT
   await new Upload({
     client,
     params: {
-      Bucket: config.storage.s3Bucket,
+      Bucket: config.storage.bucket,
       Key,
       Body: body,
       ContentType: contentType || 'application/octet-stream',
@@ -34,13 +39,13 @@ async function putAttachment({ orgId, askId, index, fileUniqueId, body, contentT
   return Key;
 }
 
-// A presigned GET URL (default 1h). Pure local HMAC signing — no network call.
-function signedUrl(key, { expiresIn = 3600 } = {}) {
-  return getSignedUrl(
-    client,
-    new GetObjectCommand({ Bucket: config.storage.s3Bucket, Key: key }),
-    { expiresIn },
-  );
+// Open a stored object for streaming to a browser. The bucket is private and its
+// endpoint may be reachable only from inside the deployment network, so the web
+// board proxies bytes through the app (see routes.js GET /attachments/:id)
+// instead of handing out presigned URLs.
+async function getAttachment(key) {
+  const out = await client.send(new GetObjectCommand({ Bucket: config.storage.bucket, Key: key }));
+  return { body: out.Body, contentType: out.ContentType || null, contentLength: out.ContentLength ?? null };
 }
 
-module.exports = { putAttachment, signedUrl, keyFor };
+module.exports = { putAttachment, getAttachment, keyFor };

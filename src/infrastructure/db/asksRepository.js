@@ -163,8 +163,17 @@ async function leaderboard(orgId) {
     LIMIT 15`;
 }
 
+// One attachment plus the org its ask was raised under, for the serve path
+// (GET /attachments/:id) to check ownership before streaming the file.
+async function getAttachment(id) {
+  return prisma.askAttachment.findUnique({
+    where: { id },
+    include: { ask: { select: { org_id: true } } },
+  });
+}
+
 module.exports = {
-  createAsk, setCardId, addAttachment, getAsk, setUrgency, setEffort,
+  createAsk, setCardId, addAttachment, getAttachment, getAsk, setUrgency, setEffort,
   claimAsk, doneAsk, listAsks, stalledAsks,
   leaderboard,
 };

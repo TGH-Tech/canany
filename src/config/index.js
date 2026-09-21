@@ -24,6 +24,11 @@ if (webEnabled) {
   need('BOT_USERNAME');
 }
 
+// The port the web board listens on. A constant, not an env var: the platform
+// routes traffic to exactly this port, so it must match `EXPOSE` in the
+// Dockerfile and `port` in atlas.json.
+const WEB_PORT = 8080;
+
 const config = Object.freeze({
   telegram: {
     token: process.env.BOT_TOKEN,
@@ -47,27 +52,31 @@ const config = Object.freeze({
   web: {
     only: webOnly,
     enabled: webEnabled,
-    port: (() => {
-      const n = Number(process.env.WEB_PORT);
-      return Number.isFinite(n) && n > 0 ? n : 8080;
-    })(),
+    port: WEB_PORT,
     sessionSecret: process.env.SESSION_SECRET || null,
     // Optional bootstrap kill-switch: when set, signup additionally requires this
     // code (gate to invited users). Unset (the default) = open signup.
     signupCode: process.env.SIGNUP_CODE || null,
-    // Set WEB_SECURE_COOKIE=true once the site is fronted by HTTPS so the session
-    // cookie is only ever sent over TLS.
-    secureCookie: process.env.WEB_SECURE_COOKIE === 'true',
   },
-  // Object storage for #ask attachments (see src/infrastructure/storage). When
-  // S3_BUCKET/AWS_REGION are unset, `enabled` is false and attachment capture is
-  // skipped — asks still work text-only, so a pure-bot deploy needs no S3.
-  // AWS credentials are resolved by the SDK's default provider chain (IAM instance
-  // role in prod, AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY locally) — never read here.
+  // Object storage for #ask attachments (see src/infrastructure/storage). Reads
+  // the S3_* names the deployment platform injects for its bucket (Atlas MinIO);
+  // any S3-compatible store works. When S3_BUCKET is unset, `enabled` is false
+  // and attachment capture is skipped — asks still work text-only.
+  // S3_ACCESS_KEY / S3_SECRET_KEY are optional: when both are set they are used
+  // as static credentials, otherwise the AWS SDK's default provider chain applies
+  // (an IAM instance role on AWS, for instance).
   storage: (() => {
-    const awsRegion = process.env.AWS_REGION || null;
-    const s3Bucket = process.env.S3_BUCKET || null;
-    return { awsRegion, s3Bucket, enabled: Boolean(awsRegion && s3Bucket) };
+    const bucket = process.env.S3_BUCKET || null;
+    const accessKey = process.env.S3_ACCESS_KEY || null;
+    const secretKey = process.env.S3_SECRET_KEY || null;
+    return {
+      bucket,
+      endpoint: process.env.S3_ENDPOINT || null, // null = AWS S3 proper
+      region: process.env.S3_REGION || 'us-east-1', // MinIO ignores it; the SDK insists on one
+      forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true', // MinIO: bucket in the path, not the host
+      credentials: accessKey && secretKey ? { accessKeyId: accessKey, secretAccessKey: secretKey } : null,
+      enabled: Boolean(bucket),
+    };
   })(),
 });
 

@@ -2,7 +2,7 @@
 
 An open asks board that lives **entirely inside Telegram**. Anyone posts "can someone do this?", anyone claims it, finishes it, and the outcome is kept. The "board" isn't a website — it's the **`/board`** command, answered with a monospace table right in the chat.
 
-Built with custom code — **no Activepieces, no Baserow, no Docker**. Just a Node.js bot + PostgreSQL (via Prisma).
+Built with custom code — **no Activepieces, no Baserow**. Just a Node.js bot + PostgreSQL (via Prisma), shipped as one container.
 
 ```
 TELEGRAM (everything lives here)          NODE APP
@@ -20,7 +20,7 @@ TELEGRAM (everything lives here)          NODE APP
 
 ### Attachments (optional)
 
-Files sent with an `#ask` — a photo, a document, or several at once (an album) — are copied from Telegram into a **private S3 bucket** and shown as thumbnails / links on the web board (served via short-lived presigned URLs). To enable, set `AWS_REGION` and `S3_BUCKET` in `.env`; credentials come from the AWS SDK's default chain (an IAM instance role in prod, or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` locally), and the bucket identity needs `s3:PutObject` + `s3:GetObject`. Leave the vars unset for a text-only deploy. Files over 20 MB (Telegram's bot-download limit) are shown as a "view in Telegram" link instead.
+Files sent with an `#ask` — a photo, a document, or several at once (an album) — are copied from Telegram into a **private S3-compatible bucket** and shown as thumbnails / links on the web board, streamed through the app to the org's owner. To enable, set `S3_BUCKET` (plus `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION` and `S3_FORCE_PATH_STYLE` for a non-AWS store such as MinIO; on Atlas these are injected). With only `S3_BUCKET` set, credentials come from the AWS SDK's default chain (an IAM instance role, say), and the bucket identity needs `s3:PutObject` + `s3:GetObject`. Leave `S3_BUCKET` unset for a text-only deploy. Files over 20 MB (Telegram's bot-download limit) are shown as a "view in Telegram" link instead.
 
 ## Project layout
 
@@ -101,29 +101,44 @@ It's **on by default**. Required config when enabled:
 ```bash
 SESSION_SECRET=$(openssl rand -hex 32)   # signs the session cookie
 BOT_USERNAME=YourBot                     # builds the t.me/<bot>?startgroup=true link
-WEB_PORT=8080                            # optional (default 8080)
 SIGNUP_CODE=                             # optional: set to gate signups to invited users
 ```
 
 Then `npm start` and open `http://localhost:8080` — you'll be sent to `/login`
-(or `/signup` for a new account). Set `WEB_ENABLED=false` to run the bot only
-(no port is opened).
+(or `/signup` for a new account). The port is fixed at 8080 (it must match the
+container's `EXPOSE` and `atlas.json`). Set `WEB_ENABLED=false` to run the bot
+only (no port is opened).
 
 > 🔒 **Serve it over HTTPS in production.** Accounts and connect tokens over plain
-> HTTP are exposed in transit. Front it with a TLS reverse proxy (Caddy gives
-> automatic HTTPS; nginx works too), then set `WEB_SECURE_COOKIE=true` so the
-> session cookie is only sent over TLS.
+> HTTP are exposed in transit. Behind a TLS proxy (Atlas, Caddy, nginx) the app
+> trusts one proxy hop and marks the session cookie `Secure` automatically
+> whenever the original request was https — there is no flag to set.
 
-## Deploy — AWS 2× EC2 (no Docker)
+## Deploy — Atlas (one container)
 
-**DB box (private):** `apt install postgresql`; create db + user; in `pg_hba.conf` allow the **app box's private VPC IP** only; security group opens **5432 from the app SG only** (no public IPv4).
+The repo ships a `Dockerfile` (one Node 22 image running bot + web board) and an
+`atlas.json` declaring a single public service, `web`, on port 8080 with a
+PostgreSQL database and a MinIO bucket provisioned by the platform:
 
-**App box (public):** install Node; copy the project; `npm ci`; set `.env` with `DATABASE_URL=…@<db-private-ip>…`; apply migrations, then start:
+- `DATABASE_URL` and the `S3_*` variables are **injected** — don't set them.
+- Set `BOT_TOKEN`, `BOT_USERNAME` and `SESSION_SECRET` (and `SIGNUP_CODE` if you
+  want gated signup) as runtime environment in the service's settings.
+- The **release** command runs `prisma migrate deploy` before every cutover, so
+  the schema is always applied before the new container takes traffic.
+- Name the service `web` in the Atlas wizard so it matches `atlas.json`.
+
+Push to `main` and Atlas rebuilds and swaps the container. After the first
+deploy, check the container's restart count is 0 and open the public URL —
+`/healthz` answers `ok` without a session.
+
+To build and run the same image anywhere else:
+
 ```bash
-npm run prisma:migrate    # prisma migrate deploy — builds tables in the existing DB
-npm run pm2:start && pm2 save && pm2 startup
+docker build -t canany .
+docker run --env-file .env -p 8080:8080 canany
 ```
-> In production `migrate deploy` does **not** create the database, so on the DB box create it once: `CREATE DATABASE canany OWNER canany;`
-The bot itself is **outbound-only** (long polling), so with `WEB_ENABLED=false` the security group only needs **SSH (22)** — no inbound web port. **With the web board on (the default)**, also open its port inbound — `WEB_PORT` (e.g. 8080), or 443 when fronted by a TLS proxy.
 
-> ⚠️ Only one instance may poll at a time. Stop the local bot before starting the one on EC2 (two pollers → Telegram `409 Conflict`).
+> ⚠️ Only one instance may poll Telegram at a time. During a cutover the old and
+> new containers overlap for a few seconds and one of them logs `409 Conflict`
+> until the old one exits — harmless. Two long-lived instances (say, a local bot
+> and the deployed one on the same token) are not: stop one.

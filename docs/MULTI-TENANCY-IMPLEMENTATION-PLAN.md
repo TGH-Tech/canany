@@ -174,9 +174,9 @@ org's own card in the org's own chat → implicitly org-scoped.
 
 **Dependency:** add `bcryptjs` (pure JS, no native build — matches the lean single-EC2 setup), cost factor 10.
 
-**Config (`src/config/index.js`):** web is now the product front door, no longer keyed off `WEB_PASSWORD`.
+**Config (`src/config/index.js`):** web is now the product front door, no longer keyed off the old shared web password.
 - `web.enabled = process.env.WEB_ENABLED !== 'false'` (default-on; opt-out for a pure-bot deploy).
-- Remove `web.password` and delete `passwordMatches` (`routes.js:12-17`); retire `WEB_PASSWORD` from config, `.env.example`, README.
+- Remove `web.password` and delete `passwordMatches` (`routes.js:12-17`); retire the shared web password from config, `.env.example`, README.
 - `SESSION_SECRET` required whenever web enabled (keep the `need()` pattern).
 - Add `config.telegram.botUsername = process.env.BOT_USERNAME` (required when web enabled) for the
   `https://t.me/<bot>?startgroup=true` link; add optional `web.signupCode = process.env.SIGNUP_CODE || null`
@@ -270,7 +270,7 @@ new org-aware bot + web; (3) admin signs up + (optionally) creates a fresh org v
 - `src/application/handlers/message.js` — `#ask` org resolution + unconnected/DM gating.
 - `src/infrastructure/telegram/client.js` — register `/connect` in `setMyCommands`.
 - `src/application/web/routes.js` — rewrite auth, add org routes, scope `GET /`.
-- `src/infrastructure/web/server.js` + `src/config/index.js` — session content, `WEB_ENABLED`/`BOT_USERNAME`/`SIGNUP_CODE`, retire `WEB_PASSWORD`.
+- `src/infrastructure/web/server.js` + `src/config/index.js` — session content, `WEB_ENABLED`/`BOT_USERNAME`/`SIGNUP_CODE`, retire the shared web password.
 - `src/presentation/web/views/` — edit `login.ejs`, `index.ejs`; add `signup.ejs`, `org-new.ejs`, `org.ejs`, `partials/form-styles.ejs`.
 - `scripts/backfill-orgs.js` — new migration script (run last, `--owner <admin>`).
 - `package.json` — add `bcryptjs`.

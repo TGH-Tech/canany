@@ -17,8 +17,8 @@ function buildApp() {
   app.set('views', VIEWS_DIR);
   app.use(express.static(path.join(__dirname, '..', '..', 'presentation', 'web', 'public')));
 
-  // Behind a reverse proxy (the recommended TLS setup) so secure cookies and
-  // req.protocol reflect the original https request.
+  // Behind the platform's TLS reverse proxy (one hop) so req.protocol — and with
+  // it the session cookie's Secure flag — reflects the original https request.
   app.set('trust proxy', 1);
 
   // Parse signup / login / org form posts.
@@ -27,13 +27,14 @@ function buildApp() {
   // Stateless signed cookie carrying { uid, orgId, csrf } — no server-side store,
   // so sessions survive restarts. sameSite:'lax' is the CSRF baseline; authed
   // POSTs additionally carry a synchronizer token (see routes.js verifyCsrf).
-  // Secure flag flips on once we're behind HTTPS.
+  // No explicit `secure`: the cookie library derives it from req.protocol, which
+  // honours the trusted proxy's X-Forwarded-Proto — Secure over HTTPS in
+  // production, plain over http://localhost in development, with no flag to set.
   app.use(cookieSession({
     name: 'canany.sid',
     secret: config.web.sessionSecret,
     httpOnly: true,
     sameSite: 'lax',
-    secure: config.web.secureCookie,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   }));
 

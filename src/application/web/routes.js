@@ -71,16 +71,29 @@ async function loadOwnedOrg(req, res) {
   return org;
 }
 
-// Attach a short-lived signed URL to each stored attachment so the browser can
-// load it straight from S3. We only ever sign keys from these rows — which
-// listAsks already scoped to the current org — so this is the whole access-control
-// story (no per-file route to probe). Oversize files (null s3_key) get url:null and
-// the view falls back to the ask's thread link.
-async function signAttachmentUrls(rows) {
-  const canSign = config.storage.enabled;
-  await Promise.all(rows.flatMap((r) => (r.attachments || []).map(async (a) => {
-    a.url = canSign && a.s3_key ? await storage.signedUrl(a.s3_key) : null;
-  })));
+// Give each stored attachment the app URL that streams it (GET /attachments/:id
+// below). The bucket is private and its endpoint may be reachable only from
+// inside the deployment network, so bytes go through the app rather than a
+// presigned URL. Oversize files (null s3_key) get url:null and the view falls
+// back to the ask's thread link.
+function attachAttachmentUrls(rows) {
+  const canServe = config.storage.enabled;
+  for (const r of rows) {
+    for (const a of r.attachments || []) {
+      a.url = canServe && a.s3_key ? `/attachments/${a.id}` : null;
+    }
+  }
+}
+
+// Image types a browser may render inline from our own origin. Anything else is
+// sent as a download: user-supplied HTML or SVG rendered same-origin would run
+// with the session cookie (stored XSS), which a separate S3 origin used to prevent.
+const INLINE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+// A filename that is safe inside a quoted Content-Disposition value.
+function safeFilename(att) {
+  const raw = att.file_name || `${att.kind}-${att.id}`;
+  return String(raw).replace(/[^\w.\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || `file-${att.id}`;
 }
 
 function register(app) {
@@ -191,7 +204,7 @@ function register(app) {
         const status = STATUS_FILTERS.includes(req.query.status) ? req.query.status : 'all';
         data.status = status;
         data.rows = status === 'all' ? rows : rows.filter((r) => r.status === status);
-        await signAttachmentUrls(data.rows); // sign only the rows we'll render
+        attachAttachmentUrls(data.rows); // only the rows we'll render
       } else if (tab === 'top') {
         // COUNT comes back BigInt via $queryRaw — convert for EJS.
         const raw = await asks.leaderboard(current.id);
@@ -207,6 +220,37 @@ function register(app) {
       }
 
       res.render('index', data);
+    } catch (err) { next(err); }
+  });
+
+  // ---- Attachments ----
+  // Stream one stored file to the signed-in owner of the org its ask belongs to.
+  // Same access rule as the board: the org must be owned by the current user; a
+  // missing, oversize (no s3_key) or foreign attachment is a uniform 404.
+  app.get('/attachments/:id', requireAuth, async (req, res, next) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || !config.storage.enabled) return notFound(res, 'No such file.');
+      const att = await asks.getAttachment(id);
+      if (!att || !att.s3_key || !att.ask || !att.ask.org_id) return notFound(res, 'No such file.');
+      const org = await orgs.getOrg(att.ask.org_id);
+      if (!org || org.owner_user_id !== req.user.id) return notFound(res, 'No such file.');
+
+      const obj = await storage.getAttachment(att.s3_key);
+      const type = obj.contentType || att.mime_type || 'application/octet-stream';
+      const inline = INLINE_IMAGE_TYPES.has(type);
+      res.set('Content-Type', type);
+      if (obj.contentLength !== null) res.set('Content-Length', String(obj.contentLength));
+      res.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${safeFilename(att)}"`);
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('Cache-Control', 'private, max-age=3600');
+      // A read error after the headers are out can't become a 500 page any more —
+      // drop the connection so the browser sees a failed load, not a truncated file.
+      obj.body.on('error', (err) => {
+        console.error('attachment stream failed:', err.message);
+        if (res.headersSent) res.destroy(); else next(err);
+      });
+      obj.body.pipe(res);
     } catch (err) { next(err); }
   });
 

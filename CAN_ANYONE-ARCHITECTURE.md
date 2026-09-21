@@ -190,31 +190,35 @@ double-apply. The rules:
 
 ## Configuration
 
-| Var                 | Required        | Purpose                                              |
-|---------------------|-----------------|------------------------------------------------------|
-| `BOT_TOKEN`         | yes             | Telegram bot token                                   |
-| `DATABASE_URL`      | yes             | PostgreSQL connection string                         |
-| `ASK_PREFIX`        | no (`#ask`)     | Trigger prefix for new asks                          |
-| `STALLED_DAYS`      | no (`2`)        | Age threshold for `/stalled`                         |
-| `WEB_PASSWORD`      | no (off)        | Enables the web board; shared login password         |
-| `SESSION_SECRET`    | if web enabled  | Signs the login cookie (required when web is on)     |
-| `WEB_PORT`          | no (`8080`)     | Web board port                                       |
-| `WEB_SECURE_COOKIE` | no (`false`)    | Send the login cookie only over HTTPS                |
+| Var                   | Required        | Purpose                                                   |
+|-----------------------|-----------------|-----------------------------------------------------------|
+| `BOT_TOKEN`           | yes             | Telegram bot token                                        |
+| `BOT_USERNAME`        | if web enabled  | Builds the "add the bot to your group" link               |
+| `DATABASE_URL`        | yes             | PostgreSQL connection string (injected on Atlas)          |
+| `SESSION_SECRET`      | if web enabled  | Signs the session cookie                                  |
+| `SIGNUP_CODE`         | no (open)       | Gate signups to people who know the code                  |
+| `S3_BUCKET` + `S3_*`  | no (off)        | Attachment storage; any S3-compatible bucket (injected)   |
+| `ASK_PREFIX`          | no (`#ask`)     | Trigger prefix for new asks                               |
+| `STALLED_DAYS`        | no (`2`)        | Age threshold for `/stalled`                              |
+| `WEB_ENABLED`         | no (`true`)     | `false` = pure-bot process, no port opened                |
+| `WEB_ONLY`            | no (`false`)    | `true` = web preview only, no polling, no database        |
+
+The web port is a constant (8080) — it must match the container's `EXPOSE` and
+`atlas.json`. The session cookie's `Secure` flag follows the request protocol
+behind the trusted proxy, so there is no flag for it.
 
 ---
 
 ## Deployment
 
-Reference setup is **2× EC2, no Docker**:
+Reference setup is **one container on Atlas** (see `Dockerfile` and `atlas.json`):
 
-- **DB box (private):** PostgreSQL, reachable only from the app box's private IP;
-  no public IPv4.
-- **App box (public):** Node running the process under a process manager;
-  migrations applied against the existing database.
-
-Because the bot is **outbound-only** (long polling), with the web board off the
-app box needs no inbound web port. Enabling the web board adds one inbound port
-(or 443 behind a TLS proxy).
+- **Service `web`:** the bot and the web board in one Node process, public on
+  port 8080 behind the platform's TLS proxy.
+- **PostgreSQL and object storage** are platform add-ons declared as `needs`;
+  their connection variables are injected, never committed.
+- **Migrations** run as the release command (`prisma migrate deploy`) before each
+  cutover, never on process start.
 
 > ⚠️ **One poller only.** Two instances polling the same token → `409 Conflict`.
 > Stop one before starting the other. This is also why scaling out / multi-tenancy

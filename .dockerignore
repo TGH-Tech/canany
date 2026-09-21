@@ -1,0 +1,10 @@
+node_modules
+.git
+.gstack
+.claude
+.agents
+.env
+docs
+*.md
+npm-debug.log*
+.DS_Store

@@ -1,0 +1,12 @@
+{
+  "services": {
+    "web": {
+      "dockerfile": "Dockerfile",
+      "port": 8080,
+      "public": true,
+      "subdomain": "canany",
+      "release": "node /app/node_modules/prisma/build/index.js migrate deploy",
+      "needs": ["postgres", "minio"]
+    }
+  }
+}

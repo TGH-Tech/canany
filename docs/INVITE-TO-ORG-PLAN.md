@@ -91,16 +91,16 @@ Optional `scripts/preview-email.js` + `"email:preview"` npm script that prints t
 
 Add an `email` group plus `web.appUrl`, following the existing `need()` / feature-flag pattern. Email is **off by default** so the app boots with no AWS account:
 
-```js
-const emailEnabled = process.env.EMAIL_ENABLED === 'true';
-if (emailEnabled) { need('AWS_REGION'); need('SES_FROM_ADDRESS'); }
-// ...
-email: { enabled: emailEnabled, region: process.env.AWS_REGION || 'us-east-1', from: process.env.SES_FROM_ADDRESS || null },
-// inside web: {}
-appUrl: process.env.APP_URL || null,   // optional; falls back to request-derived base
-```
+- `email.enabled` — an env toggle, off unless explicitly `true`.
+- When on, `need()` the SES region and the verified from-address; `email.region`
+  defaults to `us-east-1`, `email.from` to null.
+- `web.appUrl` — optional env override; falls back to the request-derived base.
 
-`.env.example` additions: `EMAIL_ENABLED=false`, `AWS_REGION`, `SES_FROM_ADDRESS`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `APP_URL`. Document that **SES starts in sandbox mode** (only sends to verified addresses until production access is requested) and that with `EMAIL_ENABLED=false` invite links are logged to the console — the invite record is still created and the link is fully valid, so the whole accept flow is testable offline.
+`.env.example` additions (names to be chosen when this ships, so the deploy
+doctor doesn't see them before the code reads them): the email toggle, the SES
+region and from-address, the AWS credential pair, and the app URL. Document that
+**SES starts in sandbox mode** (only sends to verified addresses until production
+access is requested) and that with email off invite links are logged to the console — the invite record is still created and the link is fully valid, so the whole accept flow is testable offline.
 
 ---
 
@@ -152,7 +152,7 @@ Expired/already-accepted token → `invalid`. Email mismatch → `wrong-account`
 
 ---
 
-## 8. Verification (end-to-end, single process, `WEB_ENABLED` on, `EMAIL_ENABLED=false`)
+## 8. Verification (end-to-end, single process, web on, email off)
 
 1. Run the migration (`npm run db:dev`); confirm existing owners got `owner` membership rows.
 2. user1 signs up → creates Org A → lands on `/orgs/<A>` with an `owner` membership (created in the same transaction).
@@ -161,7 +161,7 @@ Expired/already-accepted token → `invalid`. Email mismatch → `wrong-account`
 5. Redirected to `GET /invite/<token>` → `accept` → Join → membership created (`member`/co-admin), `session.orgId = A`, redirected to `/`; user2's board shows Org A and the org switcher lists it.
 6. As a co-admin, user2 can open `/orgs/<A>`, invite a third teammate, and regenerate the connect token; user2 **cannot** remove members.
 7. Reload `/orgs/<A>` as user1 → user2 appears under **Members**; pending invite gone. user1 removes user2 → user2 loses Org A on next request; user1 cannot remove themselves.
-8. (Optional, real SES) verify a from + to address in the SES sandbox, set `EMAIL_ENABLED=true` + region + creds, confirm the react-email HTML arrives. Preview the template anytime with `npm run email:preview`.
+8. (Optional, real SES) verify a from + to address in the SES sandbox, turn the email toggle on + region + creds, confirm the react-email HTML arrives. Preview the template anytime with `npm run email:preview`.
 
 ---
 
