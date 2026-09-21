@@ -4,6 +4,14 @@
 // not on boot — so the database + tables must exist before starting.
 const config = require('./config'); // requiring this validates env and exits if BOT_TOKEN/DATABASE_URL are missing.
 
+// Node's Happy Eyeballs gives each resolved address 250 ms to complete the TCP
+// handshake before closing the attempt and moving to the next one. From the
+// production server api.telegram.org answers the SYN in ~400 ms, and the
+// container network has no IPv6 to fall back to, so every poll died with
+// "EFATAL: AggregateError" (ETIMEDOUT on IPv4, ENETUNREACH on IPv6) before the
+// handshake could finish. Give one attempt a realistic budget instead.
+require('net').setDefaultAutoSelectFamilyAttemptTimeout(5000);
+
 const { prisma } = require('./infrastructure/db/prisma');
 const webOnly = config.web.only;
 let bot, startPolling;
